@@ -72,3 +72,4 @@ streamlit run app.py
 ## 🧑‍💻 Author
 
 Made by Hitarth Bhuptani — Data & Python enthusiast
+Demo link : https://yourlifedashboard-6xc93nssjaxy3b4azgrwex.streamlit.app/

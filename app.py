@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import json
 import altair as alt
+import joblib
 
 # ----------- Load Data Functions ----------- #
 @st.cache_data
@@ -51,15 +52,86 @@ df_maps = load_activity('data/maps_activity.json', 'Maps')
 
 df = pd.concat([df_chrome, df_youtube, df_maps])
 
-# Sidebar Filters
-with st.sidebar:
-    st.header("🔎 Filters")
-    sources = st.multiselect("Filter by Source", df['source'].unique(), default=list(df['source'].unique()))
-    df = df[df['source'].isin(sources)]
+# After loading data and concatenating, check for 'source'
+activity_by_day = df.groupby(['date', 'source']).size().reset_index(name='activity_count')
 
-    keyword = st.text_input("Search Keyword in Title")
-    if keyword:
-        df = df[df['title'].str.contains(keyword, case=False, na=False)]
+st.markdown("### 🌟 Highlights")
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Activities", len(df))
+col2.metric("Most Active Day", df['weekday'].value_counts().idxmax())
+col3.metric("Most Used Platform", df['source'].value_counts().idxmax())
+
+st.markdown("---")
+
+model = joblib.load('notebook/activity_predictor_model.pkl')
+activity_by_day = pd.read_pickle('notebook/activity_by_day.pkl')
+
+# Feature extraction for prediction
+latest_day = activity_by_day.iloc[-1]
+next_features = pd.DataFrame([{
+    'weekday': (latest_day['weekday'] + 1) % 7,  # Next day (circular, 0-6)
+    'prev_day': latest_day['activity_count'],
+    'prev_2day': activity_by_day.iloc[-2]['activity_count']
+}])
+
+# Feature extraction for prediction
+latest_day = activity_by_day.iloc[-1]
+next_features = pd.DataFrame([{
+    'weekday': (latest_day['weekday'] + 1) % 7,  # Next day (circular, 0-6)
+    'prev_day': latest_day['activity_count'],
+    'prev_2day': activity_by_day.iloc[-2]['activity_count']
+}])
+
+# Prediction for tomorrow's activity
+prediction = model.predict(next_features)[0]
+prediction_prob = model.predict_proba(next_features)[0][1]
+
+
+# --------------- Tab 1: Activity Prediction ---------------
+with st.sidebar:
+    
+    tab1, tab2, tab3 = st.tabs(["Prediction", "Filters", "Insights"])
+    with tab1:
+        st.subheader("Tomorrow's Activity Prediction")
+
+        if prediction == 1:
+            st.markdown(f"💪 **Prediction**: You will be active tomorrow! (Confidence: {prediction_prob*100:.2f}%)")
+        else:
+            st.markdown(f"😌 **Prediction**: You will likely be inactive tomorrow. (Confidence: {prediction_prob*100:.2f}%)")
+
+
+    with tab2:
+        st.header("🔎 Filters")
+        sources = st.multiselect("Filter by Source", df['source'].unique(), default=list(df['source'].unique()))
+        df = df[df['source'].isin(sources)]
+
+        keyword = st.text_input("Search Keyword in Title")
+        if keyword:
+            df = df[df['title'].str.contains(keyword, case=False, na=False)]
+
+
+    with tab3:
+        st.header("Highlighted Insights")
+        active_dates = pd.Series(df['date'].unique()).sort_values()
+        streak = 1
+        max_streak = 1
+
+        for i in range(1, len(active_dates)):
+            if (active_dates.iloc[i] - active_dates.iloc[i - 1]).days == 1:
+                streak += 1
+                max_streak = max(max_streak, streak)
+            else:
+                streak = 1
+
+        st.markdown(f"🔥 **Longest Active Streak**: `{max_streak}` days")
+
+        full_range = pd.date_range(df['date'].min(), df['date'].max())
+        missing = full_range.difference(pd.to_datetime(df['date'].unique()))
+        st.markdown(f"🧘 **Digital Detox Days**: `{len(missing)}` days with 0 activity")
+
+        hour_mode = df.groupby(['date'])['hour'].agg(lambda x: x.mode().iloc[0])
+        top_hour = hour_mode.mode().iloc[0]
+        st.markdown(f"⏱️ **Most Consistent Activity Hour**: `{top_hour}:00`")
 
 # Download Button
 csv = df.to_csv(index=False).encode('utf-8')
@@ -69,16 +141,7 @@ st.download_button(
     file_name='your_life_data.csv',
     mime='text/csv'
 )
-
-# Highlights
-st.markdown("### 🌟 Highlights")
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Activities", len(df))
-col2.metric("Most Active Day", df['weekday'].value_counts().idxmax())
-col3.metric("Most Used Platform", df['source'].value_counts().idxmax())
-
-st.markdown("---")
-
+st.markdown('---')
 # Top Platforms
 st.markdown("### 📌 Most Used Platforms")
 st.markdown("This chart shows which platforms you use the most—great for spotting digital patterns.")
@@ -131,28 +194,8 @@ daily_chart = alt.Chart(df).mark_line(color='#ffaa00').encode(
 
 st.altair_chart(daily_chart, use_container_width=True)
 
-active_dates = pd.Series(df['date'].unique()).sort_values()
-streak = 1
-max_streak = 1
-
-for i in range(1, len(active_dates)):
-    if (active_dates.iloc[i] - active_dates.iloc[i - 1]).days == 1:
-        streak += 1
-        max_streak = max(max_streak, streak)
-    else:
-        streak = 1
-
-st.markdown(f"🔥 **Longest Active Streak**: `{max_streak}` days")
-
-full_range = pd.date_range(df['date'].min(), df['date'].max())
-missing = full_range.difference(pd.to_datetime(df['date'].unique()))
-st.markdown(f"🧘 **Digital Detox Days**: `{len(missing)}` days with 0 activity")
-
-hour_mode = df.groupby(['date'])['hour'].agg(lambda x: x.mode().iloc[0])
-top_hour = hour_mode.mode().iloc[0]
-st.markdown(f"⏱️ **Most Consistent Activity Hour**: `{top_hour}:00`")
-
-
 # Raw Data
 with st.expander("🔍 Raw Activity Data"):
     st.dataframe(df[['time', 'title', 'source', 'extra']].sort_values('time', ascending=False))
+
+
